@@ -62,19 +62,24 @@ export async function getSkuExplorerPage(
     category,
     supplier,
     riskLevel,
+
+    maxStock = null,
+    maxCoverageDays = null,
+    minMarginPct = null,
+
     sortOption,
     page,
     pageSize,
   } = query;
 
-  const filters: Prisma.Sql[] = [];
+  const baseFilters: Prisma.Sql[] = [];
 
   const normalizedSearch = search.trim();
 
   if (normalizedSearch) {
     const searchPattern = `%${normalizedSearch}%`;
 
-    filters.push(
+    baseFilters.push(
       Prisma.sql`
         (
           sku_id ILIKE ${searchPattern}
@@ -85,141 +90,207 @@ export async function getSkuExplorerPage(
   }
 
   if (category !== "All") {
-    filters.push(Prisma.sql`category = ${category}`);
+    baseFilters.push(
+      Prisma.sql`category = ${category}`,
+    );
   }
 
   if (supplier !== "All") {
-    filters.push(Prisma.sql`supplier = ${supplier}`);
+    baseFilters.push(
+      Prisma.sql`supplier = ${supplier}`,
+    );
+  }
+
+  if (maxStock !== null) {
+    baseFilters.push(
+      Prisma.sql`current_stock <= ${maxStock}`,
+    );
+  }
+
+  if (minMarginPct !== null) {
+    baseFilters.push(
+      Prisma.sql`margin_pct >= ${minMarginPct}`,
+    );
   }
 
   const baseWhere =
-    filters.length > 0
-      ? Prisma.sql`WHERE ${Prisma.join(filters, " AND ")}`
+    baseFilters.length > 0
+      ? Prisma.sql`
+          WHERE ${Prisma.join(
+            baseFilters,
+            " AND ",
+          )}
+        `
       : Prisma.sql``;
 
-  const riskWhere =
-    riskLevel !== "All"
-      ? Prisma.sql`WHERE risk_level = ${riskLevel}`
+  const finalFilters: Prisma.Sql[] = [];
+
+  if (riskLevel !== "All") {
+    finalFilters.push(
+      Prisma.sql`risk_level = ${riskLevel}`,
+    );
+  }
+
+  if (maxCoverageDays !== null) {
+    finalFilters.push(
+      Prisma.sql`
+        coverage_days IS NOT NULL
+        AND coverage_days <= ${maxCoverageDays}
+      `,
+    );
+  }
+
+  const finalWhere =
+    finalFilters.length > 0
+      ? Prisma.sql`
+          WHERE ${Prisma.join(
+            finalFilters,
+            " AND ",
+          )}
+        `
       : Prisma.sql``;
 
   const offset = (page - 1) * pageSize;
   const orderBy = sortExpressions[sortOption];
 
-  const rows = await prisma.$queryRaw<DatabaseSkuRow[]>(Prisma.sql`
-    WITH base AS (
-      SELECT
-        sku_id,
-        sku_name,
-        category,
-        supplier,
-        current_stock,
-        lead_time_days,
-        daily_sales_30d_avg,
-        daily_sales_90d_avg,
-        stockout_days_last_90d,
-        seasonal_index,
-        margin_pct,
-        CASE
-          WHEN daily_sales_30d_avg > 0
-          THEN current_stock::numeric / daily_sales_30d_avg
-          ELSE NULL
-        END AS coverage_days
-      FROM skus
-      ${baseWhere}
-    ),
+  const rows =
+    await prisma.$queryRaw<DatabaseSkuRow[]>(
+      Prisma.sql`
+        WITH base AS (
+          SELECT
+            sku_id,
+            sku_name,
+            category,
+            supplier,
+            current_stock,
+            lead_time_days,
+            daily_sales_30d_avg,
+            daily_sales_90d_avg,
+            stockout_days_last_90d,
+            seasonal_index,
+            margin_pct,
 
-    scored AS (
-      SELECT
-        *,
-        CASE
-          WHEN current_stock = 0
-            AND daily_sales_30d_avg > 0
-          THEN 100
+            CASE
+              WHEN daily_sales_30d_avg > 0
+              THEN current_stock::numeric / daily_sales_30d_avg
+              ELSE NULL
+            END AS coverage_days
 
-          ELSE LEAST(
-            (
-              CASE
-                WHEN coverage_days IS NOT NULL
-                  AND lead_time_days > 0
-                  AND coverage_days / lead_time_days < 0.5
-                THEN 50
+          FROM skus
 
-                WHEN coverage_days IS NOT NULL
-                  AND lead_time_days > 0
-                  AND coverage_days / lead_time_days < 1
-                THEN 40
+          ${baseWhere}
+        ),
 
-                ELSE 0
-              END
-            )
-            +
-            (
-              CASE
-                WHEN stockout_days_last_90d > 10
-                THEN 20
+        scored AS (
+          SELECT
+            *,
 
-                WHEN stockout_days_last_90d > 0
-                THEN 10
+            CASE
+              WHEN current_stock = 0
+                AND daily_sales_30d_avg > 0
+              THEN 100
 
-                ELSE 0
-              END
-            )
-            +
-            (
-              CASE
-                WHEN daily_sales_30d_avg > daily_sales_90d_avg * 1.2
-                THEN 10
+              ELSE LEAST(
+                (
+                  CASE
+                    WHEN coverage_days IS NOT NULL
+                      AND lead_time_days > 0
+                      AND coverage_days / lead_time_days < 0.5
+                    THEN 50
 
-                ELSE 0
-              END
-            )
-            +
-            (
-              CASE
-                WHEN seasonal_index > 1.2
-                THEN 5
+                    WHEN coverage_days IS NOT NULL
+                      AND lead_time_days > 0
+                      AND coverage_days / lead_time_days < 1
+                    THEN 40
 
-                ELSE 0
-              END
-            ),
-            100
-          )
-        END AS risk_score
-      FROM base
-    ),
+                    ELSE 0
+                  END
+                )
+                +
+                (
+                  CASE
+                    WHEN stockout_days_last_90d > 10
+                    THEN 20
 
-    classified AS (
-      SELECT
-        *,
-        CASE
-          WHEN risk_score >= 70 THEN 'Critical'
-          WHEN risk_score >= 40 THEN 'High'
-          WHEN risk_score >= 20 THEN 'Medium'
-          ELSE 'Low'
-        END AS risk_level
-      FROM scored
-    )
+                    WHEN stockout_days_last_90d > 0
+                    THEN 10
 
-    SELECT
-      sku_id AS "skuId",
-      sku_name AS "skuName",
-      category,
-      supplier,
-      current_stock AS "currentStock",
-      coverage_days::double precision AS "coverageDays",
-      lead_time_days AS "leadTimeDays",
-      margin_pct::double precision AS "marginPct",
-      risk_score AS "riskScore",
-      risk_level AS "riskLevel",
-      COUNT(*) OVER()::integer AS "totalCount"
-    FROM classified
-    ${riskWhere}
-    ORDER BY ${orderBy}
-    LIMIT ${pageSize}
-    OFFSET ${offset}
-  `);
+                    ELSE 0
+                  END
+                )
+                +
+                (
+                  CASE
+                    WHEN daily_sales_30d_avg >
+                      daily_sales_90d_avg * 1.2
+                    THEN 10
 
-  const totalCount = rows[0]?.totalCount ?? 0;
+                    ELSE 0
+                  END
+                )
+                +
+                (
+                  CASE
+                    WHEN seasonal_index > 1.2
+                    THEN 5
+
+                    ELSE 0
+                  END
+                ),
+                100
+              )
+            END AS risk_score
+
+          FROM base
+        ),
+
+        classified AS (
+          SELECT
+            *,
+
+            CASE
+              WHEN risk_score >= 70 THEN 'Critical'
+              WHEN risk_score >= 40 THEN 'High'
+              WHEN risk_score >= 20 THEN 'Medium'
+              ELSE 'Low'
+            END AS risk_level
+
+          FROM scored
+        )
+
+        SELECT
+          sku_id AS "skuId",
+          sku_name AS "skuName",
+          category,
+          supplier,
+
+          current_stock AS "currentStock",
+
+          coverage_days::double precision AS "coverageDays",
+
+          lead_time_days AS "leadTimeDays",
+
+          margin_pct::double precision AS "marginPct",
+
+          risk_score AS "riskScore",
+
+          risk_level AS "riskLevel",
+
+          COUNT(*) OVER()::integer AS "totalCount"
+
+        FROM classified
+
+        ${finalWhere}
+
+        ORDER BY ${orderBy}
+
+        LIMIT ${pageSize}
+        OFFSET ${offset}
+      `,
+    );
+
+  const totalCount =
+    rows[0]?.totalCount ?? 0;
 
   return {
     rows: rows.map((row) => ({
@@ -234,37 +305,53 @@ export async function getSkuExplorerPage(
       riskScore: row.riskScore,
       riskLevel: row.riskLevel,
     })),
+
     totalCount,
-    totalPages: Math.max(1, Math.ceil(totalCount / pageSize)),
+
+    totalPages: Math.max(
+      1,
+      Math.ceil(totalCount / pageSize),
+    ),
+
     page,
   };
 }
 
 export async function getSkuFilterOptions() {
-  const [categoryRecords, supplierRecords] = await Promise.all([
-    prisma.sku.findMany({
-      distinct: ["category"],
-      select: {
-        category: true,
-      },
-      orderBy: {
-        category: "asc",
-      },
-    }),
+  const [categoryRecords, supplierRecords] =
+    await Promise.all([
+      prisma.sku.findMany({
+        distinct: ["category"],
 
-    prisma.sku.findMany({
-      distinct: ["supplier"],
-      select: {
-        supplier: true,
-      },
-      orderBy: {
-        supplier: "asc",
-      },
-    }),
-  ]);
+        select: {
+          category: true,
+        },
+
+        orderBy: {
+          category: "asc",
+        },
+      }),
+
+      prisma.sku.findMany({
+        distinct: ["supplier"],
+
+        select: {
+          supplier: true,
+        },
+
+        orderBy: {
+          supplier: "asc",
+        },
+      }),
+    ]);
 
   return {
-    categories: categoryRecords.map((record) => record.category),
-    suppliers: supplierRecords.map((record) => record.supplier),
+    categories: categoryRecords.map(
+      (record) => record.category,
+    ),
+
+    suppliers: supplierRecords.map(
+      (record) => record.supplier,
+    ),
   };
 }

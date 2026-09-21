@@ -1,9 +1,11 @@
 import { InventoryAnalytics } from "@/components/analytics/InventoryAnalytics";
+import { InventoryHealth } from "@/components/analytics/InventoryHealth";
 import { InventoryAssistant } from "@/components/assistant/InventoryAssistant";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
 import { getDashboardMetrics } from "@/lib/analytics/get-dashboard-metrics";
 import { getInventoryAnalytics } from "@/lib/analytics/get-inventory-analytics";
+import { getInventoryHealthAnalytics } from "@/lib/analytics/get-inventory-health-analytics";
 import {
   getSkuExplorerPage,
   getSkuFilterOptions,
@@ -15,11 +17,13 @@ export default async function Home() {
   const [
     metrics,
     analytics,
+    healthAnalytics,
     initialExplorerResult,
     filterOptions,
   ] = await Promise.all([
     getDashboardMetrics(),
     getInventoryAnalytics(),
+    getInventoryHealthAnalytics(),
 
     getSkuExplorerPage({
       search: "",
@@ -93,6 +97,8 @@ export default async function Home() {
         </section>
 
         <InventoryAnalytics data={analytics} />
+
+        <InventoryHealth data={healthAnalytics} />
 
         <InventoryAssistant />
 
