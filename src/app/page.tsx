@@ -1,4 +1,20 @@
+import { MetricCard } from "@/components/dashboard/MetricCard";
+import { calculateInventoryMetrics } from "@/lib/analytics/inventory-metrics";
+import { loadSkus } from "@/lib/data/load-skus";
+
 export default function Home() {
+  const skus = loadSkus();
+
+  const { totalSkus, inventoryValue } =
+    calculateInventoryMetrics(skus);
+
+  const formattedInventoryValue = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "BRL",
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(inventoryValue);
+
   return (
     <main className="min-h-screen bg-slate-50 px-8 py-10">
       <div className="mx-auto max-w-7xl">
@@ -16,6 +32,32 @@ export default function Home() {
             understand inventory health through actionable data.
           </p>
         </header>
+
+        <section className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard
+            title="Total SKUs"
+            value={totalSkus.toLocaleString("en-US")}
+            description="SKUs in the current inventory snapshot"
+          />
+
+          <MetricCard
+            title="Critical Risk"
+            value="—"
+            description="Pending risk engine analysis"
+          />
+
+          <MetricCard
+            title="At Risk"
+            value="—"
+            description="Pending risk engine analysis"
+          />
+
+          <MetricCard
+            title="Inventory Value"
+            value={formattedInventoryValue}
+            description="Capital invested in current stock"
+          />
+        </section>
       </div>
     </main>
   );
