@@ -1,14 +1,30 @@
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
 import { calculateInventoryMetrics } from "@/lib/analytics/inventory-metrics";
+import {
+  getSkuExplorerPage,
+  getSkuFilterOptions,
+} from "@/lib/data/get-sku-explorer-page";
 import { getSkusFromDatabase } from "@/lib/data/get-skus-from-database";
-import { calculateRisk } from "@/lib/risk/calculate-risk";
-import type { SkuTableRow } from "@/types/inventory-table";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const skus = await getSkusFromDatabase();
+  const [skus, initialExplorerResult, filterOptions] = await Promise.all([
+    getSkusFromDatabase(),
+
+    getSkuExplorerPage({
+      search: "",
+      category: "All",
+      supplier: "All",
+      riskLevel: "All",
+      sortOption: "risk-desc",
+      page: 1,
+      pageSize: 25,
+    }),
+
+    getSkuFilterOptions(),
+  ]);
 
   const {
     totalSkus,
@@ -23,23 +39,6 @@ export default async function Home() {
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(inventoryValue);
-
-  const tableRows: SkuTableRow[] = skus.map((sku) => {
-    const assessment = calculateRisk(sku);
-
-    return {
-      skuId: sku.skuId,
-      skuName: sku.skuName,
-      category: sku.category,
-      supplier: sku.supplier,
-      currentStock: sku.currentStock,
-      coverageDays: assessment.coverageDays,
-      leadTimeDays: sku.leadTimeDays,
-      marginPct: sku.marginPct,
-      riskScore: assessment.score,
-      riskLevel: assessment.level,
-    };
-  });
 
   return (
     <main className="min-h-screen bg-slate-50 px-8 py-10">
@@ -86,7 +85,11 @@ export default async function Home() {
         </section>
 
         <section className="mt-8">
-          <SkuTable rows={tableRows} />
+          <SkuTable
+            initialResult={initialExplorerResult}
+            categories={filterOptions.categories}
+            suppliers={filterOptions.suppliers}
+          />
         </section>
       </div>
     </main>
