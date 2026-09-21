@@ -5,8 +5,12 @@ import { loadSkus } from "@/lib/data/load-skus";
 export default function Home() {
   const skus = loadSkus();
 
-  const { totalSkus, inventoryValue } =
-    calculateInventoryMetrics(skus);
+  const {
+    totalSkus,
+    criticalRiskSkus,
+    atRiskSkus,
+    inventoryValue,
+  } = calculateInventoryMetrics(skus);
 
   const formattedInventoryValue = new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -42,14 +46,14 @@ export default function Home() {
 
           <MetricCard
             title="Critical Risk"
-            value="—"
-            description="Pending risk engine analysis"
+            value={criticalRiskSkus.toLocaleString("en-US")}
+            description="SKUs requiring immediate replenishment attention"
           />
 
           <MetricCard
             title="At Risk"
-            value="—"
-            description="Pending risk engine analysis"
+            value={atRiskSkus.toLocaleString("en-US")}
+            description="High and critical stockout risk SKUs"
           />
 
           <MetricCard
