@@ -1,4 +1,5 @@
 import { InventoryAnalytics } from "@/components/analytics/InventoryAnalytics";
+import { InventoryAssistant } from "@/components/assistant/InventoryAssistant";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
 import { getDashboardMetrics } from "@/lib/analytics/get-dashboard-metrics";
@@ -92,6 +93,8 @@ export default async function Home() {
         </section>
 
         <InventoryAnalytics data={analytics} />
+
+        <InventoryAssistant />
 
         <section className="mt-8">
           <SkuTable
