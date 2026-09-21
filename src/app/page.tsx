@@ -1,17 +1,16 @@
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
-import { calculateInventoryMetrics } from "@/lib/analytics/inventory-metrics";
+import { getDashboardMetrics } from "@/lib/analytics/get-dashboard-metrics";
 import {
   getSkuExplorerPage,
   getSkuFilterOptions,
 } from "@/lib/data/get-sku-explorer-page";
-import { getSkusFromDatabase } from "@/lib/data/get-skus-from-database";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [skus, initialExplorerResult, filterOptions] = await Promise.all([
-    getSkusFromDatabase(),
+  const [metrics, initialExplorerResult, filterOptions] = await Promise.all([
+    getDashboardMetrics(),
 
     getSkuExplorerPage({
       search: "",
@@ -31,7 +30,7 @@ export default async function Home() {
     criticalRiskSkus,
     atRiskSkus,
     inventoryValue,
-  } = calculateInventoryMetrics(skus);
+  } = metrics;
 
   const formattedInventoryValue = new Intl.NumberFormat("en-US", {
     style: "currency",
