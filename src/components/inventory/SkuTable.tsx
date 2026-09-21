@@ -1,135 +1,126 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { RiskBadge } from "@/components/inventory/RiskBadge";
-import type { SkuTableRow } from "@/types/inventory-table";
+import type {
+  SkuExplorerResult,
+  SkuSortOption,
+} from "@/types/inventory-table";
 import type { RiskLevel } from "@/types/risk";
 
 type SkuTableProps = {
-  rows: SkuTableRow[];
+  initialResult: SkuExplorerResult;
+  categories: string[];
+  suppliers: string[];
 };
 
-type SortOption =
-  | "risk-desc"
-  | "stock-asc"
-  | "stock-desc"
-  | "coverage-asc"
-  | "coverage-desc"
-  | "margin-desc";
-
-const PAGE_SIZE = 25;
-
-export function SkuTable({ rows }: SkuTableProps) {
+export function SkuTable({
+  initialResult,
+  categories,
+  suppliers,
+}: SkuTableProps) {
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
   const [category, setCategory] = useState("All");
   const [supplier, setSupplier] = useState("All");
   const [riskLevel, setRiskLevel] = useState<"All" | RiskLevel>("All");
+
   const [sortOption, setSortOption] =
-    useState<SortOption>("risk-desc");
+    useState<SkuSortOption>("risk-desc");
+
   const [currentPage, setCurrentPage] = useState(1);
+  const [result, setResult] =
+    useState<SkuExplorerResult>(initialResult);
 
-  const categories = useMemo(
-    () =>
-      [...new Set(rows.map((row) => row.category))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [rows],
-  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const suppliers = useMemo(
-    () =>
-      [...new Set(rows.map((row) => row.supplier))].sort((a, b) =>
-        a.localeCompare(b),
-      ),
-    [rows],
-  );
+  const isFirstRequest = useRef(true);
 
-  const filteredRows = useMemo(() => {
-    const normalizedSearch = search.trim().toLowerCase();
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(search);
+      setCurrentPage(1);
+    }, 300);
 
-    const result = rows.filter((row) => {
-      const matchesSearch =
-        normalizedSearch.length === 0 ||
-        row.skuId.toLowerCase().includes(normalizedSearch) ||
-        row.skuName.toLowerCase().includes(normalizedSearch);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [search]);
 
-      const matchesCategory =
-        category === "All" || row.category === category;
+  useEffect(() => {
+    if (isFirstRequest.current) {
+      isFirstRequest.current = false;
+      return;
+    }
 
-      const matchesSupplier =
-        supplier === "All" || row.supplier === supplier;
+    const controller = new AbortController();
 
-      const matchesRisk =
-        riskLevel === "All" || row.riskLevel === riskLevel;
+    async function loadSkus() {
+      setIsLoading(true);
+      setError(null);
 
-      return (
-        matchesSearch &&
-        matchesCategory &&
-        matchesSupplier &&
-        matchesRisk
-      );
-    });
+      const params = new URLSearchParams({
+        search: debouncedSearch,
+        category,
+        supplier,
+        riskLevel,
+        sort: sortOption,
+        page: currentPage.toString(),
+      });
 
-    return [...result].sort((a, b) => {
-      switch (sortOption) {
-        case "stock-asc":
-          return a.currentStock - b.currentStock;
+      try {
+        const response = await fetch(`/api/skus?${params.toString()}`, {
+          signal: controller.signal,
+          cache: "no-store",
+        });
 
-        case "stock-desc":
-          return b.currentStock - a.currentStock;
+        if (!response.ok) {
+          throw new Error("Failed to load SKU data.");
+        }
 
-        case "coverage-asc":
-          return (
-            (a.coverageDays ?? Number.POSITIVE_INFINITY) -
-            (b.coverageDays ?? Number.POSITIVE_INFINITY)
-          );
+        const data = (await response.json()) as SkuExplorerResult;
 
-        case "coverage-desc":
-          return (
-            (b.coverageDays ?? Number.NEGATIVE_INFINITY) -
-            (a.coverageDays ?? Number.NEGATIVE_INFINITY)
-          );
+        setResult(data);
+      } catch (requestError) {
+        if (
+          requestError instanceof DOMException &&
+          requestError.name === "AbortError"
+        ) {
+          return;
+        }
 
-        case "margin-desc":
-          return b.marginPct - a.marginPct;
-
-        case "risk-desc":
-        default:
-          if (b.riskScore !== a.riskScore) {
-            return b.riskScore - a.riskScore;
-          }
-
-          return (
-            (a.coverageDays ?? Number.POSITIVE_INFINITY) -
-            (b.coverageDays ?? Number.POSITIVE_INFINITY)
-          );
+        setError("Unable to load inventory data. Please try again.");
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
       }
-    });
+    }
+
+    void loadSkus();
+
+    return () => {
+      controller.abort();
+    };
   }, [
-    rows,
-    search,
+    debouncedSearch,
     category,
     supplier,
     riskLevel,
     sortOption,
+    currentPage,
   ]);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(filteredRows.length / PAGE_SIZE),
-  );
-
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-
-  const startIndex = (safeCurrentPage - 1) * PAGE_SIZE;
-
-  const visibleRows = filteredRows.slice(
-    startIndex,
-    startIndex + PAGE_SIZE,
-  );
-
-  function resetPage() {
+  function resetFilters() {
+    setSearch("");
+    setDebouncedSearch("");
+    setCategory("All");
+    setSupplier("All");
+    setRiskLevel("All");
+    setSortOption("risk-desc");
     setCurrentPage(1);
   }
 
@@ -151,7 +142,6 @@ export function SkuTable({ rows }: SkuTableProps) {
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
-              resetPage();
             }}
             placeholder="Search SKU or product..."
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500"
@@ -161,7 +151,7 @@ export function SkuTable({ rows }: SkuTableProps) {
             value={category}
             onChange={(event) => {
               setCategory(event.target.value);
-              resetPage();
+              setCurrentPage(1);
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500"
           >
@@ -178,7 +168,7 @@ export function SkuTable({ rows }: SkuTableProps) {
             value={supplier}
             onChange={(event) => {
               setSupplier(event.target.value);
-              resetPage();
+              setCurrentPage(1);
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500"
           >
@@ -195,7 +185,7 @@ export function SkuTable({ rows }: SkuTableProps) {
             value={riskLevel}
             onChange={(event) => {
               setRiskLevel(event.target.value as "All" | RiskLevel);
-              resetPage();
+              setCurrentPage(1);
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500"
           >
@@ -209,8 +199,8 @@ export function SkuTable({ rows }: SkuTableProps) {
           <select
             value={sortOption}
             onChange={(event) => {
-              setSortOption(event.target.value as SortOption);
-              resetPage();
+              setSortOption(event.target.value as SkuSortOption);
+              setCurrentPage(1);
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500"
           >
@@ -224,58 +214,78 @@ export function SkuTable({ rows }: SkuTableProps) {
         </div>
 
         <div className="mt-4 flex items-center justify-between gap-4">
-          <p className="text-sm text-slate-500">
-            {filteredRows.length.toLocaleString("en-US")} SKUs found
-          </p>
+          <div className="flex items-center gap-3">
+            <p className="text-sm text-slate-500">
+              {result.totalCount.toLocaleString("en-US")} SKUs found
+            </p>
+
+            {isLoading && (
+              <span className="text-xs font-medium text-slate-400">
+                Updating...
+              </span>
+            )}
+          </div>
 
           <button
             type="button"
-            onClick={() => {
-              setSearch("");
-              setCategory("All");
-              setSupplier("All");
-              setRiskLevel("All");
-              setSortOption("risk-desc");
-              setCurrentPage(1);
-            }}
+            onClick={resetFilters}
             className="text-sm font-medium text-slate-600 hover:text-slate-900"
           >
             Clear filters
           </button>
         </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
       </div>
 
-      <div className="overflow-x-auto">
+      <div
+        className={`overflow-x-auto transition-opacity ${
+          isLoading ? "opacity-60" : "opacity-100"
+        }`}
+      >
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
               <th className="px-6 py-3 text-left font-semibold text-slate-600">
                 SKU
               </th>
+
               <th className="px-6 py-3 text-left font-semibold text-slate-600">
                 Product
               </th>
+
               <th className="px-6 py-3 text-left font-semibold text-slate-600">
                 Category
               </th>
+
               <th className="px-6 py-3 text-left font-semibold text-slate-600">
                 Supplier
               </th>
+
               <th className="px-6 py-3 text-right font-semibold text-slate-600">
                 Stock
               </th>
+
               <th className="px-6 py-3 text-right font-semibold text-slate-600">
                 Coverage
               </th>
+
               <th className="px-6 py-3 text-right font-semibold text-slate-600">
                 Lead Time
               </th>
+
               <th className="px-6 py-3 text-right font-semibold text-slate-600">
                 Margin
               </th>
+
               <th className="px-6 py-3 text-right font-semibold text-slate-600">
                 Score
               </th>
+
               <th className="px-6 py-3 text-left font-semibold text-slate-600">
                 Risk
               </th>
@@ -283,7 +293,7 @@ export function SkuTable({ rows }: SkuTableProps) {
           </thead>
 
           <tbody className="divide-y divide-slate-100">
-            {visibleRows.map((row) => (
+            {result.rows.map((row) => (
               <tr
                 key={row.skuId}
                 className="transition-colors hover:bg-slate-50"
@@ -332,7 +342,7 @@ export function SkuTable({ rows }: SkuTableProps) {
               </tr>
             ))}
 
-            {visibleRows.length === 0 && (
+            {result.rows.length === 0 && (
               <tr>
                 <td
                   colSpan={10}
@@ -348,16 +358,16 @@ export function SkuTable({ rows }: SkuTableProps) {
 
       <div className="flex items-center justify-between border-t border-slate-200 px-6 py-4">
         <p className="text-sm text-slate-500">
-          Page {safeCurrentPage} of {totalPages}
+          Page {currentPage} of {result.totalPages}
         </p>
 
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={safeCurrentPage === 1}
-            onClick={() =>
-              setCurrentPage((page) => Math.max(1, page - 1))
-            }
+            disabled={currentPage === 1 || isLoading}
+            onClick={() => {
+              setCurrentPage((page) => Math.max(1, page - 1));
+            }}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Previous
@@ -365,12 +375,16 @@ export function SkuTable({ rows }: SkuTableProps) {
 
           <button
             type="button"
-            disabled={safeCurrentPage === totalPages}
-            onClick={() =>
-              setCurrentPage((page) =>
-                Math.min(totalPages, page + 1),
-              )
+            disabled={
+              currentPage >= result.totalPages ||
+              isLoading ||
+              result.totalCount === 0
             }
+            onClick={() => {
+              setCurrentPage((page) =>
+                Math.min(result.totalPages, page + 1),
+              );
+            }}
             className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Next
