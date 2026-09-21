@@ -30,7 +30,7 @@ The inventory dataset is synthetic and represents a snapshot taken on **March 31
 
 ## Live Application
 
-Deployment to Vercel will be added here after production setup.
+https://inventory-risk-assistant.vercel.app
 
 ---
 
