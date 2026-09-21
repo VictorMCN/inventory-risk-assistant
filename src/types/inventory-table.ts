@@ -26,6 +26,11 @@ export type SkuExplorerQuery = {
   category: string;
   supplier: string;
   riskLevel: "All" | RiskLevel;
+
+  maxStock?: number | null;
+  maxCoverageDays?: number | null;
+  minMarginPct?: number | null;
+
   sortOption: SkuSortOption;
   page: number;
   pageSize: number;

@@ -2,15 +2,18 @@ import type { FunctionDeclaration } from "@google/genai";
 
 import { getDashboardMetrics } from "@/lib/analytics/get-dashboard-metrics";
 import { getInventoryAnalytics } from "@/lib/analytics/get-inventory-analytics";
+import { getInventoryHealthAnalytics } from "@/lib/analytics/get-inventory-health-analytics";
 import {
   getSkuExplorerPage,
   getSkuFilterOptions,
 } from "@/lib/data/get-sku-explorer-page";
+import {
+  searchStaleInventory,
+  type StaleInventorySort,
+} from "@/lib/data/search-stale-inventory";
 import { prisma } from "@/lib/database/prisma";
 import { calculateRisk } from "@/lib/risk/calculate-risk";
-import type {
-  SkuSortOption,
-} from "@/types/inventory-table";
+import type { SkuSortOption } from "@/types/inventory-table";
 import type { RiskLevel } from "@/types/risk";
 import type { Sku } from "@/types/sku";
 
@@ -30,6 +33,12 @@ const sortOptions: SkuSortOption[] = [
   "margin-desc",
 ];
 
+const staleSortOptions: StaleInventorySort[] = [
+  "stale-days-desc",
+  "margin-desc",
+  "inventory-value-desc",
+];
+
 export const inventoryToolDeclarations: FunctionDeclaration[] = [
   {
     name: "get_inventory_summary",
@@ -38,6 +47,25 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
     parametersJsonSchema: {
       type: "object",
       properties: {},
+      additionalProperties: false,
+    },
+  },
+
+  {
+    name: "get_inventory_health",
+    description:
+      "Returns inventory-health information including stale inventory, capital tied in stale stock, high-margin stale SKUs, and suppliers ranked by High and Critical replenishment-risk SKU counts. Use this for stale inventory or supplier-risk questions.",
+    parametersJsonSchema: {
+      type: "object",
+      properties: {
+        topSuppliersLimit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description:
+            "Maximum number of suppliers to return. Defaults to 5.",
+        },
+      },
       additionalProperties: false,
     },
   },
@@ -54,22 +82,31 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
           description:
             "Optional SKU ID or product-name search text.",
         },
+
         category: {
           type: "string",
           description:
             "Optional product category such as FOOD, PET, APPAREL, or AUTOMOTIVE.",
         },
+
         supplier: {
           type: "string",
           description:
             "Optional supplier name.",
         },
+
         riskLevel: {
           type: "string",
-          enum: ["Low", "Medium", "High", "Critical"],
+          enum: [
+            "Low",
+            "Medium",
+            "High",
+            "Critical",
+          ],
           description:
             "Optional replenishment risk level.",
         },
+
         sort: {
           type: "string",
           enum: [
@@ -83,6 +120,7 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
           description:
             "Optional result ordering. Defaults to highest replenishment risk first.",
         },
+
         limit: {
           type: "integer",
           minimum: 1,
@@ -91,6 +129,67 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
             "Maximum number of SKUs to return. Defaults to 5 and cannot exceed 10.",
         },
       },
+
+      additionalProperties: false,
+    },
+  },
+
+  {
+    name: "search_stale_inventory",
+    description:
+      "Searches SKUs that have not had a sale for a specified number of days. Use this for questions about stale inventory, slow-moving stock, capital tied in old stock, or stale SKUs with high margins.",
+    parametersJsonSchema: {
+      type: "object",
+
+      properties: {
+        minDaysSinceLastSale: {
+          type: "integer",
+          minimum: 1,
+          maximum: 3650,
+          description:
+            "Minimum number of days since the SKU's last sale. Defaults to 60.",
+        },
+
+        minMarginPct: {
+          type: "number",
+          minimum: 0,
+          maximum: 100,
+          description:
+            "Optional minimum margin percentage.",
+        },
+
+        category: {
+          type: "string",
+          description:
+            "Optional product category.",
+        },
+
+        supplier: {
+          type: "string",
+          description:
+            "Optional supplier name.",
+        },
+
+        sort: {
+          type: "string",
+          enum: [
+            "stale-days-desc",
+            "margin-desc",
+            "inventory-value-desc",
+          ],
+          description:
+            "Optional ordering. Defaults to inventory value descending.",
+        },
+
+        limit: {
+          type: "integer",
+          minimum: 1,
+          maximum: 10,
+          description:
+            "Maximum number of SKUs to return. Defaults to 5.",
+        },
+      },
+
       additionalProperties: false,
     },
   },
@@ -101,6 +200,7 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
       "Returns detailed inventory and replenishment-risk information for one exact SKU ID.",
     parametersJsonSchema: {
       type: "object",
+
       properties: {
         skuId: {
           type: "string",
@@ -108,6 +208,7 @@ export const inventoryToolDeclarations: FunctionDeclaration[] = [
             "Exact SKU identifier, for example SKU-008754.",
         },
       },
+
       required: ["skuId"],
       additionalProperties: false,
     },
@@ -120,28 +221,66 @@ function getStringArgument(
 ): string | undefined {
   const value = args[key];
 
-  return typeof value === "string" && value.trim().length > 0
+  return typeof value === "string" &&
+    value.trim().length > 0
     ? value.trim()
     : undefined;
 }
 
-function getLimitArgument(args: Record<string, unknown>): number {
-  const value = args.limit;
+function getIntegerArgument(
+  args: Record<string, unknown>,
+  key: string,
+  defaultValue: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const value = args[key];
 
   if (
     typeof value !== "number" ||
     !Number.isInteger(value)
   ) {
-    return 5;
+    return defaultValue;
   }
 
-  return Math.min(10, Math.max(1, value));
+  return Math.min(
+    maximum,
+    Math.max(minimum, value),
+  );
 }
 
-async function resolveFilterValue(
+function getNumberArgument(
+  args: Record<string, unknown>,
+  key: string,
+): number | null {
+  const value = args[key];
+
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value)
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
+function getLimitArgument(
+  args: Record<string, unknown>,
+): number {
+  return getIntegerArgument(
+    args,
+    "limit",
+    5,
+    1,
+    10,
+  );
+}
+
+function resolveFilterValue(
   requestedValue: string | undefined,
   availableValues: string[],
-): Promise<string> {
+): string {
   if (!requestedValue) {
     return "All";
   }
@@ -151,7 +290,8 @@ async function resolveFilterValue(
 
   const match = availableValues.find(
     (value) =>
-      value.toLowerCase() === normalizedRequestedValue,
+      value.toLowerCase() ===
+      normalizedRequestedValue,
   );
 
   return match ?? "All";
@@ -165,31 +305,70 @@ async function getInventorySummary() {
 
   return {
     snapshotDate: "2026-03-31",
+
     metrics,
-    riskDistribution: analytics.riskDistribution,
-    categories: analytics.categories.map((category) => ({
-      category: category.category,
-      totalSkus: category.totalSkus,
-      atRiskSkus: category.atRiskSkus,
-      criticalRiskSkus: category.criticalRiskSkus,
-      inventoryValue: category.inventoryValue,
-    })),
+
+    riskDistribution:
+      analytics.riskDistribution,
+
+    categories: analytics.categories.map(
+      (category) => ({
+        category: category.category,
+        totalSkus: category.totalSkus,
+        atRiskSkus: category.atRiskSkus,
+        criticalRiskSkus:
+          category.criticalRiskSkus,
+        inventoryValue:
+          category.inventoryValue,
+      }),
+    ),
+  };
+}
+
+async function getInventoryHealth(
+  args: Record<string, unknown>,
+) {
+  const analytics =
+    await getInventoryHealthAnalytics();
+
+  const topSuppliersLimit =
+    getIntegerArgument(
+      args,
+      "topSuppliersLimit",
+      5,
+      1,
+      10,
+    );
+
+  return {
+    snapshotDate: "2026-03-31",
+
+    staleInventory:
+      analytics.staleInventory,
+
+    topSuppliersByAtRiskSkus:
+      analytics.suppliers.slice(
+        0,
+        topSuppliersLimit,
+      ),
   };
 }
 
 async function searchInventory(
   args: Record<string, unknown>,
 ) {
-  const filterOptions = await getSkuFilterOptions();
+  const filterOptions =
+    await getSkuFilterOptions();
 
-  const search = getStringArgument(args, "search") ?? "";
+  const search =
+    getStringArgument(args, "search") ?? "";
 
-  const category = await resolveFilterValue(
+  const category = resolveFilterValue(
     getStringArgument(args, "category"),
     filterOptions.categories,
   );
 
-  const supplier = await resolveFilterValue(
+  const supplier = resolveFilterValue(
     getStringArgument(args, "supplier"),
     filterOptions.suppliers,
   );
@@ -199,15 +378,20 @@ async function searchInventory(
 
   const riskLevel: "All" | RiskLevel =
     requestedRiskLevel &&
-    riskLevels.includes(requestedRiskLevel as RiskLevel)
+    riskLevels.includes(
+      requestedRiskLevel as RiskLevel,
+    )
       ? (requestedRiskLevel as RiskLevel)
       : "All";
 
-  const requestedSort = getStringArgument(args, "sort");
+  const requestedSort =
+    getStringArgument(args, "sort");
 
   const sortOption: SkuSortOption =
     requestedSort &&
-    sortOptions.includes(requestedSort as SkuSortOption)
+    sortOptions.includes(
+      requestedSort as SkuSortOption,
+    )
       ? (requestedSort as SkuSortOption)
       : "risk-desc";
 
@@ -226,21 +410,119 @@ async function searchInventory(
   return {
     filters: {
       search: search || null,
-      category: category === "All" ? null : category,
-      supplier: supplier === "All" ? null : supplier,
-      riskLevel: riskLevel === "All" ? null : riskLevel,
+      category:
+        category === "All"
+          ? null
+          : category,
+
+      supplier:
+        supplier === "All"
+          ? null
+          : supplier,
+
+      riskLevel:
+        riskLevel === "All"
+          ? null
+          : riskLevel,
+
       sort: sortOption,
     },
+
     totalMatches: result.totalCount,
     returnedResults: result.rows.length,
     skus: result.rows,
   };
 }
 
+async function searchStaleInventoryTool(
+  args: Record<string, unknown>,
+) {
+  const filterOptions =
+    await getSkuFilterOptions();
+
+  const category = resolveFilterValue(
+    getStringArgument(args, "category"),
+    filterOptions.categories,
+  );
+
+  const supplier = resolveFilterValue(
+    getStringArgument(args, "supplier"),
+    filterOptions.suppliers,
+  );
+
+  const minDaysSinceLastSale =
+    getIntegerArgument(
+      args,
+      "minDaysSinceLastSale",
+      60,
+      1,
+      3650,
+    );
+
+  const requestedMargin =
+    getNumberArgument(
+      args,
+      "minMarginPct",
+    );
+
+  const minMarginPct =
+    requestedMargin === null
+      ? null
+      : Math.min(
+          100,
+          Math.max(0, requestedMargin),
+        );
+
+  const requestedSort =
+    getStringArgument(args, "sort");
+
+  const sort: StaleInventorySort =
+    requestedSort &&
+    staleSortOptions.includes(
+      requestedSort as StaleInventorySort,
+    )
+      ? (requestedSort as StaleInventorySort)
+      : "inventory-value-desc";
+
+  const limit = getLimitArgument(args);
+
+  const result =
+    await searchStaleInventory({
+      minDaysSinceLastSale,
+      minMarginPct,
+      category,
+      supplier,
+      sort,
+      limit,
+    });
+
+  return {
+    filters: {
+      minDaysSinceLastSale,
+      minMarginPct,
+
+      category:
+        category === "All"
+          ? null
+          : category,
+
+      supplier:
+        supplier === "All"
+          ? null
+          : supplier,
+
+      sort,
+    },
+
+    ...result,
+  };
+}
+
 async function getSkuDetails(
   args: Record<string, unknown>,
 ) {
-  const requestedSkuId = getStringArgument(args, "skuId");
+  const requestedSkuId =
+    getStringArgument(args, "skuId");
 
   if (!requestedSkuId) {
     return {
@@ -249,13 +531,15 @@ async function getSkuDetails(
     };
   }
 
-  const skuId = requestedSkuId.toUpperCase();
+  const skuId =
+    requestedSkuId.toUpperCase();
 
-  const record = await prisma.sku.findUnique({
-    where: {
-      skuId,
-    },
-  });
+  const record =
+    await prisma.sku.findUnique({
+      where: {
+        skuId,
+      },
+    });
 
   if (!record) {
     return {
@@ -269,23 +553,53 @@ async function getSkuDetails(
     skuName: record.skuName,
     category: record.category,
     supplier: record.supplier,
-    unitCost: record.unitCost.toNumber(),
-    unitPrice: record.unitPrice.toNumber(),
-    currentStock: record.currentStock,
-    reorderPoint: record.reorderPoint,
-    reorderQty: record.reorderQty,
-    leadTimeDays: record.leadTimeDays,
-    dailySales30dAvg: record.dailySales30dAvg.toNumber(),
-    dailySales90dAvg: record.dailySales90dAvg.toNumber(),
-    lastSaleDate: record.lastSaleDate
-      ? record.lastSaleDate.toISOString().slice(0, 10)
-      : null,
-    lastReorderDate: record.lastReorderDate
-      ? record.lastReorderDate.toISOString().slice(0, 10)
-      : null,
-    stockoutDaysLast90d: record.stockoutDaysLast90d,
-    seasonalIndex: record.seasonalIndex.toNumber(),
-    marginPct: record.marginPct.toNumber(),
+
+    unitCost:
+      record.unitCost.toNumber(),
+
+    unitPrice:
+      record.unitPrice.toNumber(),
+
+    currentStock:
+      record.currentStock,
+
+    reorderPoint:
+      record.reorderPoint,
+
+    reorderQty:
+      record.reorderQty,
+
+    leadTimeDays:
+      record.leadTimeDays,
+
+    dailySales30dAvg:
+      record.dailySales30dAvg.toNumber(),
+
+    dailySales90dAvg:
+      record.dailySales90dAvg.toNumber(),
+
+    lastSaleDate:
+      record.lastSaleDate
+        ? record.lastSaleDate
+            .toISOString()
+            .slice(0, 10)
+        : null,
+
+    lastReorderDate:
+      record.lastReorderDate
+        ? record.lastReorderDate
+            .toISOString()
+            .slice(0, 10)
+        : null,
+
+    stockoutDaysLast90d:
+      record.stockoutDaysLast90d,
+
+    seasonalIndex:
+      record.seasonalIndex.toNumber(),
+
+    marginPct:
+      record.marginPct.toNumber(),
   };
 
   const risk = calculateRisk(sku);
@@ -305,13 +619,21 @@ export async function executeInventoryTool(
     case "get_inventory_summary":
       return getInventorySummary();
 
+    case "get_inventory_health":
+      return getInventoryHealth(args);
+
     case "search_inventory":
       return searchInventory(args);
+
+    case "search_stale_inventory":
+      return searchStaleInventoryTool(args);
 
     case "get_sku_details":
       return getSkuDetails(args);
 
     default:
-      throw new Error(`Unknown inventory tool: ${name}`);
+      throw new Error(
+        `Unknown inventory tool: ${name}`,
+      );
   }
 }

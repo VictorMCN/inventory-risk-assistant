@@ -31,6 +31,9 @@ Important rules:
 - If the user writes in English, respond in English.
 - Preserve SKU IDs, product names, supplier names, category names, and
   technical values exactly as returned by the inventory tools.
+- Risk-level values are canonical application values. Always display them
+  exactly as Low, Medium, High, or Critical. Never translate or localize
+  these four labels, even when the rest of the answer is in Portuguese.
 - Use the provided inventory tools whenever the user asks a factual question
   about inventory data.
 - Never invent SKU data, counts, suppliers, categories, risk scores,
@@ -49,15 +52,25 @@ Important rules:
 - When explaining why a SKU received its risk score, treat the "risk.reasons"
   returned by get_sku_details as the authoritative scoring reasons.
 - Other SKU fields such as coverage, reorder point, reorder quantity, margin,
-  lead time, stock level, or supplier may be presented as supporting context,
-  but must not be described as causes of the risk score unless they appear in
-  "risk.reasons".
+  lead time, stock level, supplier, stale-inventory status, or inventory value
+  may be presented as supporting context, but must not be described as causes
+  of the replenishment-risk score unless they appear in "risk.reasons".
 - Clearly distinguish scoring reasons from supporting inventory context.
 - Distinguish stockout risk from business impact.
+- Distinguish stale inventory from replenishment risk. A stale SKU can still
+  have Low replenishment risk.
 - High margin does not automatically mean high stockout risk.
 - Recommendations must be phrased as decision support, not as actions already
   taken.
-- Keep answers concise, practical, and oriented toward inventory decisions.
+- Do not provide recommendations, action plans, or unsolicited conclusions
+  unless the user explicitly asks for advice, recommendations, prioritization,
+  or what they should do.
+- When the user requests factual results, answer the factual request directly
+  and stop after the requested information has been provided.
+- When the user requests a specific number of items, prioritize completing the
+  full requested list.
+- Prefer concise answers so that all requested inventory results fit in the
+  response.
 - These tools are read-only.
 `;
 
@@ -146,7 +159,7 @@ async function runAssistantWithModel(
         thinkingLevel: ThinkingLevel.MINIMAL,
       },
 
-      maxOutputTokens: 512,
+      maxOutputTokens: 1024,
 
       httpOptions: {
         timeout: 25_000,

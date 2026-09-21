@@ -1,152 +1,165 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { askInventoryAssistant } from "@/lib/ai/inventory-assistant";
-import type { AssistantHistoryMessage } from "@/types/assistant";
+import { getSkuExplorerPage } from "@/lib/data/get-sku-explorer-page";
+import type { SkuSortOption } from "@/types/inventory-table";
+import type { RiskLevel } from "@/types/risk";
 
-const MAX_MESSAGE_LENGTH = 2_000;
-const MAX_HISTORY_MESSAGES = 10;
+const validRiskLevels = new Set<RiskLevel>([
+  "Low",
+  "Medium",
+  "High",
+  "Critical",
+]);
 
-function isHistoryMessage(
-  value: unknown,
-): value is AssistantHistoryMessage {
+const validSortOptions =
+  new Set<SkuSortOption>([
+    "risk-desc",
+    "stock-asc",
+    "stock-desc",
+    "coverage-asc",
+    "coverage-desc",
+    "margin-desc",
+  ]);
+
+const PAGE_SIZE = 25;
+
+type NumberValidationOptions = {
+  minimum?: number;
+  maximum?: number;
+  integer?: boolean;
+};
+
+function parseOptionalNumber(
+  value: string | null,
+  options: NumberValidationOptions = {},
+): number | null {
   if (
-    typeof value !== "object" ||
     value === null ||
-    !("role" in value) ||
-    !("content" in value)
+    value.trim().length === 0
   ) {
-    return false;
+    return null;
   }
 
-  return (
-    (value.role === "user" ||
-      value.role === "assistant") &&
-    typeof value.content === "string" &&
-    value.content.trim().length > 0 &&
-    value.content.length <= MAX_MESSAGE_LENGTH
-  );
-}
+  const parsed = Number(value);
 
-function isValidHistory(history: unknown): history is AssistantHistoryMessage[] {
-  if (!Array.isArray(history)) {
-    return false;
-  }
-
-  if (history.length > MAX_HISTORY_MESSAGES) {
-    return false;
-  }
-
-  if (!history.every(isHistoryMessage)) {
-    return false;
-  }
-
-  for (let index = 0; index < history.length; index += 1) {
-    const expectedRole =
-      index % 2 === 0 ? "user" : "assistant";
-
-    if (history[index].role !== expectedRole) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-export async function POST(request: NextRequest) {
-  let body: unknown;
-
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json(
-      {
-        error: "Invalid JSON request.",
-      },
-      {
-        status: 400,
-      },
-    );
+  if (!Number.isFinite(parsed)) {
+    return null;
   }
 
   if (
-    typeof body !== "object" ||
-    body === null ||
-    !("message" in body) ||
-    typeof body.message !== "string"
+    options.integer &&
+    !Number.isInteger(parsed)
   ) {
-    return NextResponse.json(
-      {
-        error: "A message is required.",
-      },
-      {
-        status: 400,
-      },
-    );
+    return null;
   }
 
-  const message = body.message.trim();
-
-  if (!message) {
-    return NextResponse.json(
-      {
-        error: "A message is required.",
-      },
-      {
-        status: 400,
-      },
-    );
+  if (
+    options.minimum !== undefined &&
+    parsed < options.minimum
+  ) {
+    return null;
   }
 
-  if (message.length > MAX_MESSAGE_LENGTH) {
-    return NextResponse.json(
-      {
-        error: `Message cannot exceed ${MAX_MESSAGE_LENGTH} characters.`,
-      },
-      {
-        status: 400,
-      },
-    );
+  if (
+    options.maximum !== undefined &&
+    parsed > options.maximum
+  ) {
+    return null;
   }
 
-  const history =
-    "history" in body && body.history !== undefined
-      ? body.history
-      : [];
+  return parsed;
+}
 
-  if (!isValidHistory(history)) {
-    return NextResponse.json(
+export async function GET(
+  request: NextRequest,
+) {
+  const { searchParams } = request.nextUrl;
+
+  const search =
+    searchParams.get("search") ?? "";
+
+  const category =
+    searchParams.get("category") ?? "All";
+
+  const supplier =
+    searchParams.get("supplier") ?? "All";
+
+  const requestedRiskLevel =
+    searchParams.get("riskLevel") ?? "All";
+
+  const riskLevel: "All" | RiskLevel =
+    requestedRiskLevel === "All" ||
+    validRiskLevels.has(
+      requestedRiskLevel as RiskLevel,
+    )
+      ? (requestedRiskLevel as
+          | "All"
+          | RiskLevel)
+      : "All";
+
+  const requestedSort =
+    searchParams.get("sort") ??
+    "risk-desc";
+
+  const sortOption: SkuSortOption =
+    validSortOptions.has(
+      requestedSort as SkuSortOption,
+    )
+      ? (requestedSort as SkuSortOption)
+      : "risk-desc";
+
+  const requestedPage = Number(
+    searchParams.get("page") ?? "1",
+  );
+
+  const page =
+    Number.isInteger(requestedPage) &&
+    requestedPage > 0
+      ? requestedPage
+      : 1;
+
+  const maxStock = parseOptionalNumber(
+    searchParams.get("maxStock"),
+    {
+      minimum: 0,
+      integer: true,
+    },
+  );
+
+  const maxCoverageDays =
+    parseOptionalNumber(
+      searchParams.get(
+        "maxCoverageDays",
+      ),
       {
-        error: "Invalid conversation history.",
-      },
-      {
-        status: 400,
+        minimum: 0,
       },
     );
-  }
 
-  try {
-    const answer = await askInventoryAssistant(
-      message,
-      history,
+  const minMarginPct =
+    parseOptionalNumber(
+      searchParams.get("minMarginPct"),
+      {
+        minimum: 0,
+        maximum: 100,
+      },
     );
 
-    return NextResponse.json({
-      answer,
+  const result =
+    await getSkuExplorerPage({
+      search,
+      category,
+      supplier,
+      riskLevel,
+
+      maxStock,
+      maxCoverageDays,
+      minMarginPct,
+
+      sortOption,
+      page,
+      pageSize: PAGE_SIZE,
     });
-  } catch (error) {
-    console.error(
-      "Inventory assistant request failed:",
-      error,
-    );
 
-    return NextResponse.json(
-      {
-        error:
-          "The inventory assistant is temporarily unavailable. Please try again.",
-      },
-      {
-        status: 503,
-      },
-    );
-  }
+  return NextResponse.json(result);
 }
