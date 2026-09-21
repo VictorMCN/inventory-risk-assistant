@@ -1,12 +1,14 @@
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
 import { calculateInventoryMetrics } from "@/lib/analytics/inventory-metrics";
-import { loadSkus } from "@/lib/data/load-skus";
+import { getSkusFromDatabase } from "@/lib/data/get-skus-from-database";
 import { calculateRisk } from "@/lib/risk/calculate-risk";
 import type { SkuTableRow } from "@/types/inventory-table";
 
-export default function Home() {
-  const skus = loadSkus();
+export const dynamic = "force-dynamic";
+
+export default async function Home() {
+  const skus = await getSkusFromDatabase();
 
   const {
     totalSkus,
