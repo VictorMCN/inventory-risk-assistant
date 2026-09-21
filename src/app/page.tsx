@@ -1,3 +1,5 @@
+import Image from "next/image";
+
 import { InventoryAnalytics } from "@/components/analytics/InventoryAnalytics";
 import { InventoryHealth } from "@/components/analytics/InventoryHealth";
 import { InventoryAssistant } from "@/components/assistant/InventoryAssistant";
@@ -45,32 +47,57 @@ export default async function Home() {
     inventoryValue,
   } = metrics;
 
-  const formattedInventoryValue = new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "BRL",
-    notation: "compact",
-    maximumFractionDigits: 1,
-  }).format(inventoryValue);
+  const formattedInventoryValue =
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "BRL",
+      notation: "compact",
+      maximumFractionDigits: 1,
+    }).format(inventoryValue);
 
   return (
-    <main className="min-h-screen bg-slate-50 px-8 py-10">
+    <main className="min-h-screen bg-slate-50 px-5 py-8 sm:px-8 sm:py-10">
       <div className="mx-auto max-w-7xl">
-        <header>
-          <p className="text-sm font-medium text-slate-500">
-            Inventory Intelligence Platform
-          </p>
+        <header className="rounded-2xl border border-slate-200 bg-white px-6 py-6 shadow-sm sm:px-8">
+          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-center">
+            <div>
+              <Image
+                src="/ira-logo.png"
+                alt="IRA — Inventory Risk Assistant"
+                width={300}
+                height={100}
+                priority
+                className="h-auto w-[240px] sm:w-[300px]"
+              />
 
-          <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
-            Inventory Risk Assistant
-          </h1>
+              <h1 className="sr-only">
+                IRA — Inventory Risk Assistant
+              </h1>
 
-          <p className="mt-3 max-w-2xl text-slate-600">
-            Identify stockout risks, prioritize replenishment decisions, and
-            understand inventory health through actionable data.
-          </p>
+              <p className="mt-5 max-w-2xl text-sm leading-6 text-slate-600 sm:text-base">
+                Identify stockout risks, prioritize replenishment decisions,
+                and understand inventory health through actionable data and
+                AI-assisted analysis.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap gap-2 lg:max-w-sm lg:justify-end">
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-600">
+                Inventory Intelligence
+              </span>
+
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+                AI Decision Support
+              </span>
+
+              <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500">
+                Snapshot · Mar 31, 2026
+              </span>
+            </div>
+          </div>
         </header>
 
-        <section className="mt-10 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <section className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard
             title="Total SKUs"
             value={totalSkus.toLocaleString("en-US")}
@@ -109,6 +136,10 @@ export default async function Home() {
             suppliers={filterOptions.suppliers}
           />
         </section>
+
+        <footer className="mt-10 border-t border-slate-200 py-6 text-center text-xs text-slate-400">
+          IRA · Inventory Risk Assistant · Inventory snapshot 2026-03-31
+        </footer>
       </div>
     </main>
   );
