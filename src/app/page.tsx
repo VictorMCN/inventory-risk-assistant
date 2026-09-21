@@ -1,11 +1,9 @@
 import { MetricCard } from "@/components/dashboard/MetricCard";
-import {
-  SkuTable,
-  type SkuTableRow,
-} from "@/components/inventory/SkuTable";
+import { SkuTable } from "@/components/inventory/SkuTable";
 import { calculateInventoryMetrics } from "@/lib/analytics/inventory-metrics";
 import { loadSkus } from "@/lib/data/load-skus";
 import { calculateRisk } from "@/lib/risk/calculate-risk";
+import type { SkuTableRow } from "@/types/inventory-table";
 
 export default function Home() {
   const skus = loadSkus();
@@ -24,34 +22,22 @@ export default function Home() {
     maximumFractionDigits: 1,
   }).format(inventoryValue);
 
-  const priorityRows: SkuTableRow[] = skus
-    .map((sku) => {
-      const assessment = calculateRisk(sku);
+  const tableRows: SkuTableRow[] = skus.map((sku) => {
+    const assessment = calculateRisk(sku);
 
-      return {
-        skuId: sku.skuId,
-        skuName: sku.skuName,
-        category: sku.category,
-        supplier: sku.supplier,
-        currentStock: sku.currentStock,
-        coverageDays: assessment.coverageDays,
-        leadTimeDays: sku.leadTimeDays,
-        marginPct: sku.marginPct,
-        riskScore: assessment.score,
-        riskLevel: assessment.level,
-      };
-    })
-    .sort((a, b) => {
-      if (b.riskScore !== a.riskScore) {
-        return b.riskScore - a.riskScore;
-      }
-
-      return (
-        (a.coverageDays ?? Number.POSITIVE_INFINITY) -
-        (b.coverageDays ?? Number.POSITIVE_INFINITY)
-      );
-    })
-    .slice(0, 25);
+    return {
+      skuId: sku.skuId,
+      skuName: sku.skuName,
+      category: sku.category,
+      supplier: sku.supplier,
+      currentStock: sku.currentStock,
+      coverageDays: assessment.coverageDays,
+      leadTimeDays: sku.leadTimeDays,
+      marginPct: sku.marginPct,
+      riskScore: assessment.score,
+      riskLevel: assessment.level,
+    };
+  });
 
   return (
     <main className="min-h-screen bg-slate-50 px-8 py-10">
@@ -98,7 +84,7 @@ export default function Home() {
         </section>
 
         <section className="mt-8">
-          <SkuTable rows={priorityRows} />
+          <SkuTable rows={tableRows} />
         </section>
       </div>
     </main>
