@@ -1,6 +1,8 @@
+import { InventoryAnalytics } from "@/components/analytics/InventoryAnalytics";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { SkuTable } from "@/components/inventory/SkuTable";
 import { getDashboardMetrics } from "@/lib/analytics/get-dashboard-metrics";
+import { getInventoryAnalytics } from "@/lib/analytics/get-inventory-analytics";
 import {
   getSkuExplorerPage,
   getSkuFilterOptions,
@@ -9,8 +11,14 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [metrics, initialExplorerResult, filterOptions] = await Promise.all([
+  const [
+    metrics,
+    analytics,
+    initialExplorerResult,
+    filterOptions,
+  ] = await Promise.all([
     getDashboardMetrics(),
+    getInventoryAnalytics(),
 
     getSkuExplorerPage({
       search: "",
@@ -82,6 +90,8 @@ export default async function Home() {
             description="Capital invested in current stock"
           />
         </section>
+
+        <InventoryAnalytics data={analytics} />
 
         <section className="mt-8">
           <SkuTable
